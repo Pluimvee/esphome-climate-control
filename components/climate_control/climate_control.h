@@ -24,7 +24,7 @@ class Temperature {
   void setup(float min, float max, uint32_t max_age_minutes, float max_delta_psec = 0.0f);
   bool expired();
   float get();           // cached median; NAN if expired or insufficient samples
-  float trend();         // normalized to °C/30min based on actual sample interval
+  float trend();         // °C/hour: least-squares slope of the long-term medians; 0 within ±0.2
   float source() const { return short_stats_.empty() ? NAN : short_stats_.back(); }
   uint32_t sample_count() const { return sample_count_; }
   bool set(float value);
@@ -34,13 +34,14 @@ class Temperature {
   float max_value_{0.0f};
   float max_delta_psec_{0.0f};
   float cached_median_{NAN};
-  float cached_long_mean_{NAN};
+  float cached_slope_{NAN};   // °C/hour, before the noise filter
   uint32_t max_age_ms_{0};
   uint32_t last_valid_ms_{0};
   uint32_t sample_interval_ms_{0};
   uint32_t sample_count_{0};
   std::deque<float> short_stats_;
   std::deque<float> long_stats_;
+  std::deque<uint32_t> long_times_;  // millis() at which each long_stats_ entry was pushed
 };
 
 // -- Weather-compensated heating curve --
