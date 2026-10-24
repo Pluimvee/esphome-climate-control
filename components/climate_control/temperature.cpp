@@ -20,27 +20,12 @@ static float deque_median_(std::deque<float> buf) {
   return (n % 2 == 1) ? buf[n / 2] : (buf[n / 2 - 1] + buf[n / 2]) / 2.0f;
 }
 
-// least-squares slope in °C/hour of values against their millis() timestamps,
-// returns NAN with fewer than 2 points or no time spread. Times are taken
-// relative to the oldest entry, so millis() wrap-around is harmless.
-static float deque_slope_per_hour_(const std::deque<float> &values, const std::deque<uint32_t> &times) {
-  const size_t n = std::min(values.size(), times.size());
-  if (n < 2) return NAN;
-  const uint32_t t0 = times.front();
-  float mean_t = 0.0f, mean_v = 0.0f;
-  for (size_t i = 0; i < n; i++) {
-    mean_t += (float) (times[i] - t0) / 3600000.0f;
-    mean_v += values[i];
-  }
-  mean_t /= (float) n;
-  mean_v /= (float) n;
-  float num = 0.0f, den = 0.0f;
-  for (size_t i = 0; i < n; i++) {
-    const float dt = (float) (times[i] - t0) / 3600000.0f - mean_t;
-    num += dt * (values[i] - mean_v);
-    den += dt * dt;
-  }
-  return den > 0.0f ? num / den : NAN;
+// calculates the mean of a deque of floats, returns NAN if the deque is empty
+static float deque_mean_(const std::deque<float> &buf) {
+  if (buf.empty()) return NAN;
+  float sum = 0.0f;
+  for (float v : buf) sum += v;
+  return sum / (float) buf.size();
 }
 
 // pushes value to the back of the buffer and pops from the front if the buffer exceeds max_size
@@ -61,8 +46,6 @@ void Temperature::setup(float min, float max, uint32_t max_age_minutes, float ma
   this->sample_count_ = 0;
   this->short_stats_.clear();
   this->long_stats_.clear();
-  this->long_times_.clear();
-  this->cached_slope_ = NAN;
 }
 
 // returns true if the temperature has expired; clears stats on expiry
@@ -72,10 +55,9 @@ bool Temperature::expired() {
   if (this->last_valid_ms_ == 0 || (millis() - this->last_valid_ms_) > this->max_age_ms_) {
     this->short_stats_.clear();
     this->long_stats_.clear();
-    this->long_times_.clear();
     this->sample_count_ = 0;
     this->cached_median_ = NAN;
-    this->cached_slope_ = NAN;
+    this->cached_long_mean_ = NAN;
     return true;
   }
   return false;
@@ -87,15 +69,15 @@ float Temperature::get() {
   return this->cached_median_;
 }
 
-// returns the trend in °C/hour; NAN until the long-term buffer holds 2 entries.
-// The slope is fitted over the timestamped long-term medians, so it does not
-// depend on the (jittery) last sample interval. The previous version divided
-// (median - long mean) by 100 sample intervals, while the two are only ~45
-// intervals apart: it reported ~0.45x the real rate.
+// returns the cached trend (°C/30min); NAN until both buffers have enough data
 float Temperature::trend() {
-  if (this->expired() || std::isnan(this->cached_slope_))
+  if (this->expired() || this->sample_interval_ms_ == 0)
     return NAN;
-  return std::fabs(this->cached_slope_) < 0.2f ? 0.0f : this->cached_slope_;
+  if (std::isnan(this->cached_median_) || std::isnan(this->cached_long_mean_))
+    return NAN;
+  const float horizon_ms = (float)(STATS_BUFFER_SIZE * STATS_BUFFER_SIZE) * this->sample_interval_ms_;
+  const float delta = (this->cached_median_ - this->cached_long_mean_) / horizon_ms * (60.0f * 60.0f * 1000.0f);
+  return std::fabs(delta) < 0.2f ? 0.0f : delta;
 }
 
 // sets a new temperature value if it's valid and updates the stats, returns true if the value was accepted
@@ -135,17 +117,16 @@ bool Temperature::set(float value) {
   this->cached_median_ = deque_median_(this->short_stats_);
   this->sample_count_++;
 
-  // Every STATS_BUFFER_SIZE samples push the current median, with its timestamp,
-  // into long-term stats. The median of short_stats_ (~1.7 min window at 10 s)
-  // filters raw sensor outliers; the slope over the long-term entries (~17 min
-  // window at 10 s) gives the trend. Every entry lags its push time by the same
-  // half short window, so the lag does not bias the slope.
+  // Every STATS_BUFFER_SIZE samples push the current median into long-term stats.
+  // We use median for short_stats_ (~1.4 min window) to filter raw sensor outliers.
+  // We use mean for long_stats_ (~17 min window) because its entries are already
+  // median-filtered (outlier-free). Mean properly weights the full window: median
+  // would pick only the middle sample (~8 min ago), causing a decelerating trend
+  // (fast early drop, plateau later) to be underestimated — mean pulls the baseline
+  // toward the older high values and thus gives a trend closer to the true rate.
   if (this->sample_count_ % STATS_BUFFER_SIZE == 0 && !std::isnan(this->cached_median_)) {
     bounded_push_(this->long_stats_, this->cached_median_, STATS_BUFFER_SIZE);
-    this->long_times_.push_back(now);
-    while (this->long_times_.size() > STATS_BUFFER_SIZE)
-      this->long_times_.pop_front();
-    this->cached_slope_ = deque_slope_per_hour_(this->long_stats_, this->long_times_);
+    this->cached_long_mean_ = deque_mean_(this->long_stats_);
   }
   this->last_valid_ms_ = now;
   return true;
