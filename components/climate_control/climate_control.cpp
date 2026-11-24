@@ -33,7 +33,40 @@ void ClimateControl::setup() {
   ESP_LOGI(TAG, "ClimateControl initialized");
 }
 
+// Floor temperature = inlet while the water circulates, otherwise NAN (unknown).
+// Circulating: flame on while CH is on (compressor runs, pump runs), or inlet≈outlet,
+// inlet not cooled below room, and inlet nearly stable, for 10 min (continuous pump).
+// The stability check rejects stagnant water where inlet and outlet cool at different
+// rates and cross each other (seen 17-11: |in-out| < 0.5 for 30 min, inlet -3.5 °C/h).
+// The flame path only applies with CH on: OT status shows 2-6 s flame glitches, which
+// must not switch CH on via the floor rule.
+float ClimateControl::floor_temperature_() {
+  const uint32_t now = millis();
+  const float t_in = this->inlet.get();
+  if (this->operating.enable_CH && this->flame_sensor_ && this->flame_sensor_->state)
+    return t_in;
+
+  if (std::fabs(t_in - this->outlet.get()) < 0.5f && t_in > this->inside.get() - 1.0f &&
+      std::fabs(this->inlet.trend()) < 2.0f) {  // NaN-safe: any NaN fails the check
+    if (this->equal_since_ms_ == 0) this->equal_since_ms_ = now;
+  } else {
+    this->equal_since_ms_ = 0;
+  }
+  if (this->equal_since_ms_ != 0 && (now - this->equal_since_ms_) >= 10UL * 60UL * 1000UL)
+    return t_in;
+  return NAN;
+}
+
 void ClimateControl::update() {
+  // 0. After boot: take the operating mode from the (restored) ch/cooling switches
+  if (!this->restored_) {
+    this->restored_ = true;
+    if (this->ch_switch_)      this->operating.enable_CH      = this->ch_switch_->state;
+    if (this->cooling_switch_) this->operating.enable_Cooling = this->cooling_switch_->state;
+    ESP_LOGI(TAG, "Restored operating mode: CH=%d, Cooling=%d",
+             this->operating.enable_CH, this->operating.enable_Cooling);
+  }
+
   // 1. Sync input sensors → members
   // Numbers are always polled (user-set, no publish event).
   // Sensor inputs are only fed when the source has published since our last update()
@@ -58,7 +91,8 @@ void ClimateControl::update() {
   this->curve.update(this->inside, this->target, this->outside, this->setpoint);
 
   // 3. Update operating mode
-  this->operating.update(this->inside, this->outside, this->inlet, this->outlet, this->setpoint, this->target);
+  const float t_floor = this->floor_temperature_();
+  this->operating.update(this->inside, this->outside, this->inlet, this->outlet, this->setpoint, this->target, t_floor);
 
   // 3b. When system disabled: override operating mode — force CH and Cooling off
   if (this->enable_switch_ && !this->enable_switch_->state) {
@@ -83,7 +117,14 @@ void ClimateControl::update() {
   publish_temp("outlet",   this->outlet);
   publish_temp("setpoint", this->setpoint);
   publish_temp("target",   this->target);
+  publish("floor",   t_floor);
   publish("factor",  this->curve.factor());
+  auto publish_bin = [&](const std::string &key, bool value) {
+    auto it = this->binary_sensors_.find(key);
+    if (it != this->binary_sensors_.end()) it->second->publish_state(value);
+  };
+  publish_bin("heating", this->operating.enable_CH);
+  publish_bin("cooling", this->operating.enable_Cooling);
 
   // 5. Direct switch control
   if (this->ch_switch_) {

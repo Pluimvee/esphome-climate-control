@@ -12,6 +12,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/number/number.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/output/float_output.h"
 
@@ -24,7 +25,7 @@ class Temperature {
   void setup(float min, float max, uint32_t max_age_minutes, float max_delta_psec = 0.0f);
   bool expired();
   float get();           // cached median; NAN if expired or insufficient samples
-  float trend();         // normalized to °C/30min based on actual sample interval
+  float trend();         // normalized to °C/hour based on actual sample interval
   float source() const { return short_stats_.empty() ? NAN : short_stats_.back(); }
   uint32_t sample_count() const { return sample_count_; }
   bool set(float value);
@@ -67,7 +68,7 @@ class OperatingMode {
 
   bool update(Temperature &inside, Temperature &outside,
               Temperature &inlet, Temperature &outlet,
-              Temperature &setpoint, Temperature &target);
+              Temperature &setpoint, Temperature &target, float t_floor);
  private:
   uint32_t last_change_ms_{0};
 };
@@ -83,6 +84,7 @@ class ClimateControl : public PollingComponent {
   void set_outside_sensor(sensor::Sensor *value) { this->outside_sensor_ = value; }
   void set_inlet_sensor(sensor::Sensor *value)   { this->inlet_sensor_ = value; }
   void set_outlet_sensor(sensor::Sensor *value)  { this->outlet_sensor_ = value; }
+  void set_flame_sensor(binary_sensor::BinarySensor *value) { this->flame_sensor_ = value; }
   void set_target_number(number::Number *value)      { this->target_number_ = value; }
   void set_factor_a_number(number::Number *value)    { this->factor_a_number_ = value; }
   void set_factor_b_number(number::Number *value)    { this->factor_b_number_ = value; }
@@ -91,6 +93,7 @@ class ClimateControl : public PollingComponent {
 
   // -- Output sensor registration --
   void register_sensor(const std::string &key, sensor::Sensor *sensor) { this->sensors_[key] = sensor; }
+  void register_binary_sensor(const std::string &key, binary_sensor::BinarySensor *sensor) { this->binary_sensors_[key] = sensor; }
 
   // -- Switch + output wiring --
   void set_enable_switch(switch_::Switch *sw)           { this->enable_switch_ = sw; }
@@ -116,6 +119,12 @@ class ClimateControl : public PollingComponent {
   sensor::Sensor *outside_sensor_{nullptr};
   sensor::Sensor *inlet_sensor_{nullptr};
   sensor::Sensor *outlet_sensor_{nullptr};
+  binary_sensor::BinarySensor *flame_sensor_{nullptr};
+
+  // Floor temperature: inlet while the water circulates, else NAN
+  float floor_temperature_();
+  uint32_t equal_since_ms_{0};  // start of inlet≈outlet with flame off
+  bool restored_{false};        // operating mode synced from ch/cooling switches after boot
 
   // Timestamps set by on_state callbacks; update() only calls Temperature::set()
   // when the sensor published since the previous update() run.
@@ -131,6 +140,7 @@ class ClimateControl : public PollingComponent {
   number::Number *factor_c_number_{nullptr};
 
   std::map<std::string, sensor::Sensor *> sensors_;
+  std::map<std::string, binary_sensor::BinarySensor *> binary_sensors_;
   switch_::Switch *enable_switch_{nullptr};
   switch_::Switch *ch_switch_{nullptr};
   switch_::Switch *cooling_switch_{nullptr};

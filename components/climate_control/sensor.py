@@ -45,6 +45,7 @@ SENSOR_DEFINITIONS = {
     "outlet":       _temp_ext_schema,
     "setpoint":     _temp_ext_schema,
     "target":       _temp_ext_schema,
+    "floor":        _temp_schema,
     "factor":       _factor_schema,
 }
 

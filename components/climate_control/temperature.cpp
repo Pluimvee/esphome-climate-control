@@ -69,15 +69,16 @@ float Temperature::get() {
   return this->cached_median_;
 }
 
-// returns the cached trend (°C/30min); NAN until both buffers have enough data
+// returns the cached trend (°C/hour); NAN until both buffers have enough data
+// The long mean is centred ~N*N/2 samples back, so that is the horizon of the difference.
 float Temperature::trend() {
   if (this->expired() || this->sample_interval_ms_ == 0)
     return NAN;
   if (std::isnan(this->cached_median_) || std::isnan(this->cached_long_mean_))
     return NAN;
-  const float horizon_ms = (float)(STATS_BUFFER_SIZE * STATS_BUFFER_SIZE) * this->sample_interval_ms_;
+  const float horizon_ms = (float)(STATS_BUFFER_SIZE * STATS_BUFFER_SIZE) / 2.0f * this->sample_interval_ms_;
   const float delta = (this->cached_median_ - this->cached_long_mean_) / horizon_ms * (60.0f * 60.0f * 1000.0f);
-  return std::fabs(delta) < 0.2f ? 0.0f : delta;
+  return std::fabs(delta) < 0.1f ? 0.0f : delta;
 }
 
 // sets a new temperature value if it's valid and updates the stats, returns true if the value was accepted

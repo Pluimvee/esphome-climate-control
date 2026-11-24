@@ -3,17 +3,18 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import number, sensor, switch, output
+from esphome.components import number, sensor, switch, output, binary_sensor
 from esphome.const import CONF_ID
 
 # -- Component dependencies --
-AUTO_LOAD = ["sensor", "number", "switch", "output"]
+AUTO_LOAD = ["sensor", "number", "switch", "output", "binary_sensor"]
 
 # -- YAML keys --
 CONF_ROOM_SENSOR = "room_sensor"
 CONF_OUTSIDE_SENSOR = "outside_sensor"
 CONF_INLET_SENSOR = "inlet_sensor"
 CONF_OUTLET_SENSOR = "outlet_sensor"
+CONF_FLAME_SENSOR = "flame_sensor"
 CONF_TARGET_NUMBER = "target_number"
 CONF_FACTOR_A_NUMBER = "factor_a_number"
 CONF_FACTOR_B_NUMBER = "factor_b_number"
@@ -38,6 +39,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_OUTSIDE_SENSOR): cv.use_id(sensor.Sensor),
         cv.Required(CONF_INLET_SENSOR): cv.use_id(sensor.Sensor),
         cv.Required(CONF_OUTLET_SENSOR): cv.use_id(sensor.Sensor),
+        cv.Optional(CONF_FLAME_SENSOR): cv.use_id(binary_sensor.BinarySensor),
         cv.Required(CONF_TARGET_NUMBER): cv.use_id(number.Number),
         cv.Required(CONF_FACTOR_A_NUMBER): cv.use_id(number.Number),
         cv.Required(CONF_FACTOR_B_NUMBER): cv.use_id(number.Number),
@@ -62,6 +64,8 @@ async def to_code(config):
     cg.add(var.set_outside_sensor(await cg.get_variable(config[CONF_OUTSIDE_SENSOR])))
     cg.add(var.set_inlet_sensor(await cg.get_variable(config[CONF_INLET_SENSOR])))
     cg.add(var.set_outlet_sensor(await cg.get_variable(config[CONF_OUTLET_SENSOR])))
+    if CONF_FLAME_SENSOR in config:
+        cg.add(var.set_flame_sensor(await cg.get_variable(config[CONF_FLAME_SENSOR])))
     cg.add(var.set_target_number(await cg.get_variable(config[CONF_TARGET_NUMBER])))
     cg.add(var.set_factor_a_number(await cg.get_variable(config[CONF_FACTOR_A_NUMBER])))
     cg.add(var.set_factor_b_number(await cg.get_variable(config[CONF_FACTOR_B_NUMBER])))

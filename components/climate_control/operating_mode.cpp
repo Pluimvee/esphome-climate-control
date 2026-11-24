@@ -38,6 +38,10 @@ static float round1(float value) { return round(10.0f * value) / 10.0f; }
                             ON   ON     ON      ON    ON    ON   ON    ON    ON    ON    ON
     ==> ON = (trend > error)
 
+  HEAT ON LOGIC (floor)
+    When the floor (inlet while circulating) is more than 4K below Tset, we switch on heating,
+    also when it is warm enough inside: the rising Tset is ahead of the floor.
+
   HEAT OFF LOGIC
     When inlet >= setpoint + 0.1, we switch off heating as the floor reached target temperature
     We may add a trend condition here as well, to avoid turning off when the setpoint is still rising
@@ -46,7 +50,7 @@ static float round1(float value) { return round(10.0f * value) / 10.0f; }
 // NOTE: all decision logic is based on a safe result when a value is NaN and compared!
 bool OperatingMode::update(Temperature &inside, Temperature &outside,
                             Temperature &inlet,  Temperature &outlet,
-                            Temperature &setpoint, Temperature &target) {
+                            Temperature &setpoint, Temperature &target, float t_floor) {
   const uint32_t now = millis();
 
   if ((now - this->last_change_ms_) < this->anti_short_cycle_ms)
@@ -82,6 +86,13 @@ bool OperatingMode::update(Temperature &inside, Temperature &outside,
       this->enable_Cooling = false;
       this->last_change_ms_ = now;
       ESP_LOGI(TAG, "Switch ON Heating, Tinside error (%0.1f) < trend-TSet (%0.1f/h) AND Tset=%.1f > Ttarget=%.1f", error, t, t_set, t_target);
+      return true;
+    }
+    if (t_set - t_floor > 4.0f) {
+      this->enable_CH = true;
+      this->enable_Cooling = false;
+      this->last_change_ms_ = now;
+      ESP_LOGI(TAG, "Switch ON Heating, Tset (%0.1f) - Tfloor (%0.1f) > 4", t_set, t_floor);
       return true;
     }
   }
